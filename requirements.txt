@@ -15,6 +15,7 @@ google-generativeai==0.3.2
 qdrant-client==1.7.0
 
 # PDF Processing
+pypdf==3.17.4
 PyPDF2==3.0.1
 pdfplumber==0.10.3
 
