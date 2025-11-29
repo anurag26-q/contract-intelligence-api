@@ -1,26 +1,59 @@
 """
-Audit engine for detecting risky clauses in contracts.
+Audit engine for detecting risky clauses using LangChain with Google Gemini.
+Hybrid approach: rule-based patterns + LLM analysis.
 """
 
 import logging
-import openai
 import json
 import re
 from django.conf import settings
 from typing import List, Dict
 
-logger = logging.getLogger('api')
+# LangChain imports
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema import StrOutputParser
 
-# Initialize OpenAI
-openai.api_key = settings.OPENAI_API_KEY
+logger = logging.getLogger('api')
 
 
 class AuditEngine:
-    """Service for auditing contracts and detecting risks."""
+    """Service for auditing contracts and detecting risks with LangChain Gemini."""
     
     def __init__(self):
-        self.model = settings.OPENAI_MODEL
+        """Initialize audit engine with Gemini LLM."""
         self.audit_mode = settings.AUDIT_MODE
+        
+        # Initialize Gemini for LLM-based analysis
+        self.llm = ChatGoogleGenerativeAI(
+            model=settings.GEMINI_MODEL,
+            google_api_key=settings.GOOGLE_API_KEY,
+            temperature=0.2,  # Slightly higher for creative risk detection
+        )
+        
+        # Create audit prompt template
+        self.prompt_template = ChatPromptTemplate.from_messages([
+            ("system", """You are a legal contract auditor. Analyze the contract for potential risks.
+
+Identify risks in these categories:
+1. Auto-renewal with inadequate notice period (<30 days)
+2. Unlimited or uncapped liability
+3. Overly broad indemnification
+4. One-sided termination rights
+5. Unfavorable payment terms
+6. Weak confidentiality protections
+
+For each risk, return JSON object with:
+- risk_type: (auto_renewal|unlimited_liability|broad_indemnity|termination_imbalance|unfavorable_payment|weak_confidentiality|other)
+- severity: (low|medium|high|critical)
+- title: Brief title
+- description: Concise explanation
+- evidence: Exact quote from contract (max 200 chars)
+- recommendation: Mitigation suggestion
+
+Return ONLY valid JSON array of risk objects, no additional text."""),
+            ("human", "Analyze this contract for risks:\\n\\n{contract_text}")
+        ])
     
     def audit_contract(self, document_text: str, extracted_data: Dict = None) -> List[Dict]:
         """Audit contract for risks using hybrid approach."""
@@ -56,9 +89,9 @@ class AuditEngine:
                     'risk_type': 'auto_renewal',
                     'severity': 'high',
                     'title': 'Inadequate Auto-Renewal Notice Period',
-                    'description': f'Contract auto-renews with only {notice_days} days notice, which may be insufficient.',
+                    'description': f'Contract auto-renews with only {notice_days} days notice.',
                     'evidence': extracted_data['auto_renewal'].get('terms', 'Auto-renewal clause detected'),
-                    'recommendation': 'Negotiate for at least 30-60 days notice period before auto-renewal.',
+                    'recommendation': 'Negotiate for at least 30-60 days notice period.',
                     'detection_method': 'rules',
                     'rule_matched': 'auto_renewal_notice_period',
                 })
@@ -80,11 +113,11 @@ class AuditEngine:
                     'title': 'Unlimited Liability Exposure',
                     'description': 'Contract contains unlimited liability provisions.',
                     'evidence': evidence,
-                    'recommendation': 'Negotiate for a liability cap, typically 12-24 months of fees paid.',
+                    'recommendation': 'Negotiate for a liability cap (typically 12-24 months of fees).',
                     'detection_method': 'rules',
                     'rule_matched': 'unlimited_liability_pattern',
                 })
-                break  # Only report once
+                break
         
         # Rule 3: Broad indemnity
         broad_indemnity_patterns = [
@@ -101,9 +134,9 @@ class AuditEngine:
                     'risk_type': 'broad_indemnity',
                     'severity': 'high',
                     'title': 'Overly Broad Indemnification',
-                    'description': 'Indemnification clause may be too broad and one-sided.',
+                    'description': 'Indemnification clause may be too broad.',
                     'evidence': evidence,
-                    'recommendation': 'Negotiate for mutual indemnification or limit scope to direct damages.',
+                    'recommendation': 'Negotiate for mutual indemnification or limit scope.',
                     'detection_method': 'rules',
                     'rule_matched': 'broad_indemnity_pattern',
                 })
@@ -112,82 +145,36 @@ class AuditEngine:
         return findings
     
     def _llm_based_audit(self, text: str, extracted_data: Dict = None) -> List[Dict]:
-        """LLM-based comprehensive risk analysis."""
+        """LLM-based comprehensive risk analysis using LangChain Gemini."""
         try:
-            # System prompt
-            system_prompt = """Analyze the following contract for potential risks:
-
-Identify risks in these categories:
-1. Auto-renewal with inadequate notice period (<30 days)
-2. Unlimited or uncapped liability
-3. Overly broad indemnification
-4. One-sided termination rights
-5. Unfavorable payment terms
-6. Weak confidentiality protections
-
-For each risk found, provide:
-- risk_type: category name (use: auto_renewal, unlimited_liability, broad_indemnity, termination_imbalance, unfavorable_payment, weak_confidentiality, other)
-- severity: low/medium/high/critical
-- title: Brief title
-- description: Concise explanation
-- evidence: Exact text from contract (up to 200 chars)
-- recommendation: Mitigation suggestion
-
-Return as JSON array."""
+            # Build LCEL chain
+            audit_chain = self.prompt_template | self.llm | StrOutputParser()
             
-            # Call LLM
-            response = openai.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Analyze this contract:\n\n{text[:10000]}"}  # Limit context
-                ],
-                functions=[self._get_audit_schema()],
-                function_call={"name": "analyze_contract_risks"},
-                temperature=0.2,
-            )
+            # Invoke with truncated text
+            result = audit_chain.invoke({
+                "contract_text": text[:10000]  # Limit to 10k chars
+            })
             
-            # Parse response
-            function_call = response.choices[0].message.function_call
-            findings = json.loads(function_call.arguments).get('findings', [])
+            # Parse JSON from result
+            cleaned_result = result.replace("```json", "").replace("```", "").strip()
+            findings = json.loads(cleaned_result)
+            
+            # Ensure it's a list
+            if isinstance(findings, dict) and 'findings' in findings:
+                findings = findings['findings']
+            elif not isinstance(findings, list):
+                findings = [findings]
             
             # Add detection method
             for finding in findings:
                 finding['detection_method'] = 'llm'
             
+            logger.info(f"LLM audit completed with {len(findings)} findings")
             return findings
             
         except Exception as e:
-            logger.error(f"LLM-based audit failed: {e}")
+            logger.error(f"LLM-based audit failed: {e}", exc_info=True)
             return []
-    
-    def _get_audit_schema(self) -> Dict:
-        """Get OpenAI function schema for audit."""
-        return {
-            "name": "analyze_contract_risks",
-            "description": "Analyze contract for potential risks",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "findings": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "risk_type": {"type": "string"},
-                                "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
-                                "title": {"type": "string"},
-                                "description": {"type": "string"},
-                                "evidence": {"type": "string"},
-                                "recommendation": {"type": "string"},
-                            },
-                            "required": ["risk_type", "severity", "title", "description", "evidence"]
-                        }
-                    }
-                },
-                "required": ["findings"]
-            }
-        }
     
     def _deduplicate_findings(self, findings: List[Dict]) -> List[Dict]:
         """Remove duplicate findings based on risk type and evidence similarity."""
@@ -195,7 +182,7 @@ Return as JSON array."""
         unique_findings = []
         
         for finding in findings:
-            key = (finding['risk_type'], finding['evidence'][:50])
+            key = (finding['risk_type'], finding.get('evidence', '')[:50])
             if key not in seen:
                 seen[key] = True
                 unique_findings.append(finding)
