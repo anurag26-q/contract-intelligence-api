@@ -133,8 +133,11 @@ SPECTACULAR_SETTINGS = {
     'COMPONENT_SPLIT_REQUEST': True,
 }
 
+# Redis Configuration
+REDIS_URL = env('REDIS_URL', default='redis://redis:6379/0')
+
 # Celery Configuration
-CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default=REDIS_URL)
 CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='django-db')
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
