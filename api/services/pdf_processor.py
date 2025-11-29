@@ -1,28 +1,27 @@
 """
-PDF processing service using LangChain's built-in PDF loader and text splitter.
+PDF processing service using LangChain's vector database integration.
 """
 
 import logging
 from typing import List, Dict
 from django.conf import settings
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qdrant_models
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-import uuid
+from langchain_community.vectorstores import Qdrant
+from langchain.schema import Document as LangChainDocument
+from qdrant_client import QdrantClient
 
 logger = logging.getLogger('api')
 
 
 class PDFProcessor:
-    """Service for processing PDF files with LangChain tools."""
+    """Service for processing PDF files with LangChain vector database."""
     
     def __init__(self):
         """Initialize PDF processor with LangChain components."""
         self.chunk_size = settings.CHUNK_SIZE
         self.chunk_overlap = settings.CHUNK_OVERLAP
-        self.qdrant_client = None
         
         # Initialize LangChain embeddings for Gemini
         self.embeddings = GoogleGenerativeAIEmbeddings(
@@ -38,29 +37,28 @@ class PDFProcessor:
             separators=["\n\n", "\n", ". ", " ", ""],
         )
         
-        self._init_qdrant()
+        # Initialize Qdrant client for collection management
+        self.qdrant_client = QdrantClient(
+            host=settings.QDRANT_HOST,
+            port=settings.QDRANT_PORT,
+        )
+        
+        # Initialize LangChain Qdrant vector store
+        self.vector_store = None
+        self._init_vector_store()
     
-    def _init_qdrant(self):
-        """Initialize Qdrant client."""
+    def _init_vector_store(self):
+        """Initialize LangChain Qdrant vector store."""
         try:
-            self.qdrant_client = QdrantClient(
-                host=settings.QDRANT_HOST,
-                port=settings.QDRANT_PORT,
+            # Create LangChain Qdrant instance
+            self.vector_store = Qdrant(
+                client=self.qdrant_client,
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                embeddings=self.embeddings,
             )
-            # Create collection if it doesn't exist (Gemini embeddings are 768-dimensional)
-            try:
-                self.qdrant_client.get_collection(settings.QDRANT_COLLECTION_NAME)
-            except Exception:
-                self.qdrant_client.create_collection(
-                    collection_name=settings.QDRANT_COLLECTION_NAME,
-                    vectors_config=qdrant_models.VectorParams(
-                        size=768,  # Gemini embedding-001 dimension
-                        distance=qdrant_models.Distance.COSINE
-                    ),
-                )
-                logger.info(f"Created Qdrant collection: {settings.QDRANT_COLLECTION_NAME}")
+            logger.info(f"Initialized LangChain Qdrant vector store: {settings.QDRANT_COLLECTION_NAME}")
         except Exception as e:
-            logger.error(f"Failed to initialize Qdrant: {e}")
+            logger.error(f"Failed to initialize vector store: {e}")
     
     def extract_pages_with_langchain(self, pdf_path: str) -> List[Dict]:
         """Extract text page by page using LangChain PyPDFLoader."""
@@ -111,55 +109,34 @@ class PDFProcessor:
             logger.error(f"LangChain text chunking failed: {e}")
             raise
     
-    def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings using LangChain Gemini."""
-        try:
-            # Use LangChain's embed_documents method
-            embeddings = self.embeddings.embed_documents(texts)
-            logger.info(f"Generated {len(embeddings)} embeddings using Gemini")
-            return embeddings
-        except Exception as e:
-            logger.error(f"Gemini embedding generation failed: {e}")
-            raise
-    
     def store_vectors(self, chunks: List[Dict], document_id: int) -> List[str]:
-        """Store chunk embeddings in Qdrant."""
+        """Store chunk embeddings using LangChain Qdrant."""
         try:
-            # Extract texts for embedding
-            texts = [chunk['text'] for chunk in chunks]
-            
-            # Generate embeddings using LangChain Gemini
-            embeddings = self.generate_embeddings(texts)
-            
-            # Create points for Qdrant
-            points = []
-            vector_ids = []
-            
-            for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-                vector_id = str(uuid.uuid4())
-                vector_ids.append(vector_id)
+            # Convert chunks to LangChain Document objects
+            documents = []
+            for chunk in chunks:
+                # Create metadata for each chunk
+                chunk_metadata = {
+                    'document_id': document_id,
+                    'chunk_index': chunk['chunk_index'],
+                    'char_start': chunk['char_start'],
+                    'char_end': chunk['char_end'],
+                }
                 
-                point = qdrant_models.PointStruct(
-                    id=vector_id,
-                    vector=embedding,
-                    payload={
-                        'document_id': document_id,
-                        'chunk_index': chunk['chunk_index'],
-                        'char_start': chunk['char_start'],
-                        'char_end': chunk['char_end'],
-                        'text': chunk['text'][:500],  # Store preview
-                        'metadata': chunk.get('metadata', {}),
-                    }
+                # Add any additional metadata from chunk
+                chunk_metadata.update(chunk.get('metadata', {}))
+                
+                doc = LangChainDocument(
+                    page_content=chunk['text'],
+                    metadata=chunk_metadata
                 )
-                points.append(point)
+                documents.append(doc)
             
-            # Upload to Qdrant
-            self.qdrant_client.upsert(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                points=points
-            )
+            # Use LangChain's add_documents method
+            # This handles embedding generation and storage automatically
+            vector_ids = self.vector_store.add_documents(documents)
             
-            logger.info(f"Stored {len(points)} vectors in Qdrant for document {document_id}")
+            logger.info(f"Stored {len(documents)} vectors using LangChain Qdrant for document {document_id}")
             return vector_ids
             
         except Exception as e:
@@ -167,21 +144,25 @@ class PDFProcessor:
             raise
     
     def delete_document_vectors(self, document_id: int):
-        """Delete all vectors for a document from Qdrant."""
+        """Delete all vectors for a document using LangChain Qdrant."""
         try:
+            # Use LangChain's delete method with filter
+            # Note: LangChain Qdrant uses the underlying client for deletion
+            from qdrant_client.http import models as qdrant_models
+            
             self.qdrant_client.delete(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
                 points_selector=qdrant_models.FilterSelector(
                     filter=qdrant_models.Filter(
                         must=[
                             qdrant_models.FieldCondition(
-                                key='document_id',
+                                key='metadata.document_id',  # Note: LangChain stores metadata differently
                                 match=qdrant_models.MatchValue(value=document_id)
                             )
                         ]
                     )
                 )
             )
-            logger.info(f"Deleted vectors for document {document_id}")
+            logger.info(f"Deleted vectors for document {document_id} using LangChain Qdrant")
         except Exception as e:
             logger.error(f"Vector deletion failed: {e}")

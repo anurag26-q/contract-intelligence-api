@@ -1,13 +1,11 @@
 """
 RAG Engine for question answering using LangChain with Google Gemini.
-Uses LangChain Expression Language (LCEL) for building the RAG pipeline.
+Uses LangChain's vector store integration and LCEL chains.
 """
 
 import logging
 from typing import List, Dict, Iterator
 from django.conf import settings
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qdrant_models
 
 # LangChain imports
 from langchain_google_genai import GoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -15,6 +13,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema import StrOutputParser
 from langchain.schema.runnable import RunnablePassthrough
 from langchain_community.vectorstores import Qdrant
+from qdrant_client import QdrantClient
 
 from api.models import DocumentChunk
 
@@ -22,7 +21,7 @@ logger = logging.getLogger('api')
 
 
 class RAGEngine:
-    """RAG engine using LangChain LCEL with Google Gemini."""
+    """RAG engine using LangChain LCEL with Google Gemini and vector store."""
     
     def __init__(self):
         """Initialize RAG engine with LangChain components."""
@@ -41,7 +40,7 @@ class RAGEngine:
         )
         
         # Initialize Qdrant client
-        self.qdrant_client = Qdrant Client(
+        self.qdrant_client = QdrantClient(
             host=settings.QDRANT_HOST,
             port=settings.QDRANT_PORT,
         )
@@ -70,11 +69,11 @@ Question: {question}
 Answer:""")
         ])
         
-        logger.info("RAGEngine initialized with LangChain and Google Gemini")
+        logger.info("RAGEngine initialized with LangChain Qdrant vector store and Gemini")
     
     def retrieve(self, question: str, document_ids: List[int] = None, top_k: int = 5) -> List[Dict]:
         """
-        Retrieve relevant document chunks using vector search.
+        Retrieve relevant document chunks using LangChain vector store.
         
         Args:
             question: User's question
@@ -86,29 +85,24 @@ Answer:""")
         """
         try:
             # Build filter for specific documents if provided
-            search_filter = None
-            if document_ids:
-                search_filter = qdrant_models.Filter(
-                    must=[
-                        qdrant_models.FieldCondition(
-                            key="document_id",
-                            match=qdrant_models.MatchAny(any=document_ids)
-                        )
-                    ]
-                )
+            search_kwargs = {"k": top_k}
             
-            # Use LangChain vector store for similarity search
-            if search_filter:
-                docs = self.vector_store.similarity_search(
-                    question,
-                    k=top_k,
-                    filter=search_filter
-                )
-            else:
-                docs = self.vector_store.similarity_search(
-                    question,
-                    k=top_k
-                )
+            if document_ids:
+                # LangChain Qdrant filter format
+                search_kwargs["filter"] = {
+                    "must": [
+                        {
+                            "key": "metadata.document_id",
+                            "match": {"any": document_ids}
+                        }
+                    ]
+                }
+            
+            # Use LangChain vector store similarity search
+            docs = self.vector_store.similarity_search(
+                question,
+                **search_kwargs
+            )
             
             # Convert to our format
             chunks = []
@@ -123,7 +117,7 @@ Answer:""")
                 }
                 chunks.append(chunk_data)
             
-            logger.info(f"Retrieved {len(chunks)} chunks for question")
+            logger.info(f"Retrieved {len(chunks)} chunks using LangChain vector store")
             return chunks
             
         except Exception as e:
@@ -206,7 +200,7 @@ Answer:""")
             # After streaming answer, send citations
             citations = self._extract_citations(chunks)
             import json
-            yield f"__CITATIONS__:{json.dumps(citations)}"
+            yield f"\n__CITATIONS__:{json.dumps(citations)}"
             
         except Exception as e:
             logger.error(f"Error in streaming: {e}", exc_info=True)
