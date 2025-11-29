@@ -1,26 +1,25 @@
 """
-PDF processing service using LangChain Gemini embeddings.
+PDF processing service using LangChain's built-in PDF loader and text splitter.
 """
 
 import logging
-import hashlib
 from typing import List, Dict
-import PyPDF2
-import pdfplumber
 from django.conf import settings
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qdrant_models
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 import uuid
 
 logger = logging.getLogger('api')
 
 
 class PDFProcessor:
-    """Service for processing PDF files with LangChain Gemini embeddings."""
+    """Service for processing PDF files with LangChain tools."""
     
     def __init__(self):
-        """Initialize PDF processor with LangChain Gemini embeddings."""
+        """Initialize PDF processor with LangChain components."""
         self.chunk_size = settings.CHUNK_SIZE
         self.chunk_overlap = settings.CHUNK_OVERLAP
         self.qdrant_client = None
@@ -29,6 +28,14 @@ class PDFProcessor:
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model=settings.GEMINI_EMBEDDING_MODEL,
             google_api_key=settings.GOOGLE_API_KEY,
+        )
+        
+        # Initialize LangChain text splitter
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=self.chunk_size * 4,  # Convert tokens to chars (approx)
+            chunk_overlap=self.chunk_overlap * 4,
+            length_function=len,
+            separators=["\n\n", "\n", ". ", " ", ""],
         )
         
         self._init_qdrant()
@@ -55,61 +62,54 @@ class PDFProcessor:
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant: {e}")
     
-    def extract_pages_with_pdfplumber(self, pdf_path: str) -> List[Dict]:
-        """Extract text page by page with metadata using pdfplumber."""
-        pages_data = []
-        
+    def extract_pages_with_langchain(self, pdf_path: str) -> List[Dict]:
+        """Extract text page by page using LangChain PyPDFLoader."""
         try:
-            with pdfplumber.open(pdf_path) as pdf:
-                for page_num, page in enumerate(pdf.pages, start=1):
-                    text = page.extract_text() or ""
-                    
-                    page_data = {
-                        'page_number': page_num,
-                        'text': text,
-                        'char_count': len(text),
-                        'metadata': {
-                            'width': page.width,
-                            'height': page.height,
-                        }
-                    }
-                    pages_data.append(page_data)
+            # Use LangChain's PDF loader
+            loader = PyPDFLoader(pdf_path)
+            pages = loader.load()
             
+            pages_data = []
+            for page_num, page in enumerate(pages, start=1):
+                page_data = {
+                    'page_number': page_num,
+                    'text': page.page_content,
+                    'char_count': len(page.page_content),
+                    'metadata': page.metadata
+                }
+                pages_data.append(page_data)
+            
+            logger.info(f"Extracted {len(pages_data)} pages using LangChain PyPDFLoader")
             return pages_data
         except Exception as e:
-            logger.error(f"pdfplumber extraction failed: {e}")
+            logger.error(f"LangChain PDF extraction failed: {e}")
             raise
     
-    def chunk_text(self, text: str, metadata: Dict = None) -> List[Dict]:
-        """Chunk text using recursive character splitting."""
-        chunks = []
-        text_length = len(text)
-        
-        # Convert token-based size to character-based (rough estimate: 1 token ≈ 4 chars)
-        char_chunk_size = self.chunk_size * 4
-        char_overlap = self.chunk_overlap * 4
-        
-        start = 0
-        chunk_index = 0
-        
-        while start < text_length:
-            end = min(start + char_chunk_size, text_length)
-            chunk_text = text[start:end]
+    def chunk_text_with_langchain(self, text: str, metadata: Dict = None) -> List[Dict]:
+        """Chunk text using LangChain RecursiveCharacterTextSplitter."""
+        try:
+            # Use LangChain's text splitter
+            chunks = self.text_splitter.split_text(text)
             
-            chunk_data = {
-                'chunk_index': chunk_index,
-                'text': chunk_text,
-                'char_start': start,
-                'char_end': end,
-                'metadata': metadata or {},
-            }
-            chunks.append(chunk_data)
+            chunks_data = []
+            char_position = 0
             
-            chunk_index += 1
-            start = end - char_overlap if end < text_length else text_length
-        
-        logger.info(f"Created {len(chunks)} chunks from text")
-        return chunks
+            for chunk_index, chunk_text in enumerate(chunks):
+                chunk_data = {
+                    'chunk_index': chunk_index,
+                    'text': chunk_text,
+                    'char_start': char_position,
+                    'char_end': char_position + len(chunk_text),
+                    'metadata': metadata or {},
+                }
+                chunks_data.append(chunk_data)
+                char_position += len(chunk_text)
+            
+            logger.info(f"Created {len(chunks_data)} chunks using LangChain RecursiveCharacterTextSplitter")
+            return chunks_data
+        except Exception as e:
+            logger.error(f"LangChain text chunking failed: {e}")
+            raise
     
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings using LangChain Gemini."""
