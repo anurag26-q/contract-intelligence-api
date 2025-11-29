@@ -1,0 +1,116 @@
+"""
+Q&A Evaluation Dataset
+
+This dataset contains questions about sample contracts with expected answers for evaluation.
+"""[
+    {
+        "id": 1,
+        "document_name": "nda.pdf",
+        "question": "What are the names of the parties to this agreement?",
+        "expected_answer_keywords": [
+            "party",
+            "parties",
+            "company"
+        ],
+        "answer_type": "extraction"
+    },
+    {
+        "id": 2,
+        "document_name": "nda.pdf",
+        "question": "What is the duration of the confidentiality obligation?",
+        "expected_answer_keywords": [
+            "years",
+            "duration",
+            "term"
+        ],
+        "answer_type": "extraction"
+    },
+    {
+        "id": 3,
+        "document_name": "msa.pdf",
+        "question": "Does this contract auto-renew? If so, what is the notice period?",
+        "expected_answer_keywords": [
+            "renew",
+            "notice",
+            "days"
+        ],
+        "answer_type": "extraction"
+    },
+    {
+        "id": 4,
+        "document_name": "msa.pdf",
+        "question": "What is the liability cap in this agreement?",
+        "expected_answer_keywords": [
+            "liability",
+            "cap",
+            "limit"
+        ],
+        "answer_type": "extraction"
+    },
+    {
+        "id": 5,
+        "document_name": "saas.pdf",
+        "question": "What are the payment terms?",
+        "expected_answer_keywords": [
+            "payment",
+            "fee",
+            "invoice"
+        ],
+        "answer_type": "extraction"
+    },
+    {
+        "id": 6,
+        "document_name": "saas.pdf",
+        "question": "Under what conditions can either party terminate the agreement?",
+        "expected_answer_keywords": [
+            "terminate",
+            "termination",
+            "breach"
+        ],
+        "answer_type": "extraction"
+    },
+    {
+        "id": 7,
+        "document_name": "nda.pdf",
+        "question": "What happens if confidential information is disclosed by mistake?",
+        "expected_answer_keywords": [
+            "disclosure",
+            "breach",
+            "remedy"
+        ],
+        "answer_type": "reasoning"
+    },
+    {
+        "id": 8,
+        "document_name": "msa.pdf",
+        "question": "Are there any indemnification clauses? What do they cover?",
+        "expected_answer_keywords": [
+            "indemnify",
+            "indemnification",
+            "claims"
+        ],
+        "answer_type": "extraction"
+    },
+    {
+        "id": 9,
+        "document_name": "all",
+        "question": "Which agreement has the shortest termination notice period?",
+        "expected_answer_keywords": [
+            "shortest",
+            "notice",
+            "days"
+        ],
+        "answer_type": "comparison"
+    },
+    {
+        "id": 10,
+        "document_name": "all",
+        "question": "What governing law is most commonly used across these contracts?",
+        "expected_answer_keywords": [
+            "governing",
+            "law",
+            "jurisdiction"
+        ],
+        "answer_type": "aggregation"
+    }
+]
