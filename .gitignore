@@ -92,3 +92,17 @@ README.md
 setup_github.ps1
 setup_github.sh
 
+
+.create_commits.ps1
+.create_commits.sh
+.DESIGN.md
+.GIT_SETUP.md
+.GIT_SETUP.ps1
+.GIT_SETUP.md
+.LOOM_SCRIPT.md
+.LOOM_SCRIPT.ps1
+.LOOM_SCRIPT.sh
+.README.md
+.setup_github.ps1
+.setup_github.sh
+
