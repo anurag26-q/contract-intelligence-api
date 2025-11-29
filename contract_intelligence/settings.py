@@ -141,24 +141,6 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
-CELERY_RESULT_EXTENDED = True
-
-# Redis Configuration
-REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
-
-# OpenAI Configuration
-OPENAI_API_KEY = env('OPENAI_API_KEY', default='')
-OPENAI_MODEL = env('OPENAI_MODEL', default='gpt-4-turbo-preview')
-OPENAI_EMBEDDING_MODEL = env('OPENAI_EMBEDDING_MODEL', default='text-embedding-3-small')
-
-# Qdrant Vector Database Configuration
-QDRANT_HOST = env('QDRANT_HOST', default='localhost')
-QDRANT_PORT = env.int('QDRANT_PORT', default=6333)
-QDRANT_COLLECTION_NAME = env('QDRANT_COLLECTION_NAME', default='contracts')
-
-# Audit Engine Configuration
-AUDIT_MODE = env('AUDIT_MODE', default='hybrid')  # options: rules_only, llm_only, hybrid
 
 # Chunking Configuration
 CHUNK_SIZE = env.int('CHUNK_SIZE', default=800)
