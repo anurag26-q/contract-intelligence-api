@@ -26,9 +26,9 @@ def process_document_task(self, document_id: int):
         # Initialize processor
         processor = PDFProcessor()
         
-        # Extract text and pages
+        # Extract text and pages using LangChain PyPDFLoader
         pdf_path = document.file_path.path
-        pages_data = processor.extract_pages_with_pdfplumber(pdf_path)
+        pages_data = processor.extract_pages_with_langchain(pdf_path)
         
         # Save pages to database
         for page_data in pages_data:
@@ -45,8 +45,8 @@ def process_document_task(self, document_id: int):
         document.page_count = len(pages_data)
         document.total_characters = len(full_text)
         
-        # Chunk text
-        chunks = processor.chunk_text(full_text)
+        # Chunk text using LangChain RecursiveCharacterTextSplitter
+        chunks = processor.chunk_text_with_langchain(full_text)
         
         # Store vectors in Qdrant and save chunks to DB
         vector_ids = processor.store_vectors(chunks, document_id)
