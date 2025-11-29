@@ -1,50 +1,73 @@
 """
-Contract field extraction service using LLM.
+Contract field extraction service using LangChain with Google Gemini.
+Uses structured output prompting instead of function calling.
 """
 
 import logging
 import json
-import openai
 from django.conf import settings
 from typing import Dict, Any
 from datetime import datetime
 import re
 
-logger = logging.getLogger('api')
+# LangChain imports
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema import StrOutputParser
 
-# Initialize OpenAI
-openai.api_key = settings.OPENAI_API_KEY
+logger = logging.getLogger('api')
 
 
 class ContractExtractor:
-    """Service for extracting structured fields from contracts."""
+    """Service for extracting structured fields from contracts using LangChain Gemini."""
     
     def __init__(self):
-        self.model = settings.OPENAI_MODEL
+        """Initialize extractor with Gemini LLM."""
+        self.llm = ChatGoogleGenerativeAI(
+            model=settings.GEMINI_MODEL,
+            google_api_key=settings.GOOGLE_API_KEY,
+            temperature=settings.GEMINI_TEMPERATURE,
+        )
+        
+        # Create extraction prompt template
+        self.prompt_template = ChatPromptTemplate.from_messages([
+            ("system", """You are a legal contract analyst. Extract the following fields from the contract and return them as valid JSON:
+
+{{
+  "parties": ["list of company/entity names"],
+  "effective_date": "YYYY-MM-DD or null",
+  "term": "contract duration or null",
+  "governing_law": "jurisdiction or null",
+  "payment_terms": "payment schedule or null",
+  "termination": "termination conditions or null",
+  "auto_renewal": {{"enabled": true/false, "notice_days": number or null, "terms": "text or null"}},
+  "confidentiality": "confidentiality obligations or null",
+  "indemnity": "indemnification scope or null",
+  "liability_cap": {{"amount": number or null, "currency": "currency code or null"}},
+  "signatories": [{{"name": "name", "title": "title"}}]
+}}
+
+Return ONLY valid JSON, no additional text."""),
+            ("human", "Extract contract fields from:\\n\\n{contract_text}")
+        ])
     
     def extract_fields(self, document_text: str) -> Dict[str, Any]:
-        """Extract all contract fields using LLM."""
+        """Extract all contract fields using LangChain Gemini."""
         try:
-            logger.info("Starting contract field extraction")
+            logger.info("Starting contract field extraction via Gemini")
             
-            # System prompt for extraction
-            system_prompt = self._get_extraction_prompt()
+            # Build and invoke LCEL chain
+            extraction_chain = self.prompt_template | self.llm | StrOutputParser()
             
-            # Call OpenAI with function calling
-            response = openai.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Extract contract fields from:\n\n{document_text[:15000]}"}  # Limit context
-                ],
-                functions=[self._get_extraction_schema()],
-                function_call={"name": "extract_contract_fields"},
-                temperature=0.1,
-            )
+            # Invoke with truncated text
+            result = extraction_chain.invoke({
+                "contract_text": document_text[:15000]  # Limit to first 15k chars
+            })
             
-            # Parse function call response
-            function_call = response.choices[0].message.function_call
-            extracted_data = json.loads(function_call.arguments)
+            # Parse JSON from result
+            # Clean potential markdown code blocks
+            cleaned_result = result.replace("```json", "").replace("```", "").strip()
+            extracted_data = json.loads(cleaned_result)
             
             # Post-process and validate
             processed_data = self._post_process_extraction(extracted_data)
@@ -53,97 +76,9 @@ class ContractExtractor:
             return processed_data
             
         except Exception as e:
-            logger.error(f"Contract extraction failed: {e}")
+            logger.error(f"Contract extraction failed: {e}", exc_info=True)
             # Return fallback extraction using regex
             return self._fallback_extraction(document_text)
-    
-    def _get_extraction_prompt(self) -> str:
-        """Get system prompt for extraction."""
-        return """You are a legal contract analyst. Extract the following fields from the contract:
-        
-- parties: Array of company/entity names mentioned as parties to the agreement
-- effective_date: Effective date in ISO format (YYYY-MM-DD)
-- term: Contract duration/term
-- governing_law: Jurisdiction governing the contract
-- payment_terms: Payment schedule and amounts
-- termination: Termination conditions
-- auto_renewal: Auto-renewal information including enabled status, notice days, and terms
-- confidentiality: Key confidentiality obligations
-- indemnity: Indemnification scope and details
-- liability_cap: Liability cap with amount and currency
-- signatories: Array of signatories with name and title
-
-Return structured JSON. If a field is not found, use null."""
-    
-    def _get_extraction_schema(self) -> Dict:
-        """Get OpenAI function schema for extraction."""
-        return {
-            "name": "extract_contract_fields",
-            "description": "Extract structured fields from a legal contract",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "parties": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of party names"
-                    },
-                    "effective_date": {
-                        "type": "string",
-                        "description": "Effective date in YYYY-MM-DD format"
-                    },
-                    "term": {
-                        "type": "string",
-                        "description": "Contract term/duration"
-                    },
-                    "governing_law": {
-                        "type": "string",
-                        "description": "Governing law jurisdiction"
-                    },
-                    "payment_terms": {
-                        "type": "string",
-                        "description": "Payment terms and schedule"
-                    },
-                    "termination": {
-                        "type": "string",
-                        "description": "Termination conditions"
-                    },
-                    "auto_renewal": {
-                        "type": "object",
-                        "properties": {
-                            "enabled": {"type": "boolean"},
-                            "notice_days": {"type": "integer"},
-                            "terms": {"type": "string"}
-                        }
-                    },
-                    "confidentiality": {
-                        "type": "string",
-                        "description": "Confidentiality obligations"
-                    },
-                    "indemnity": {
-                        "type": "string",
-                        "description": "Indemnification provisions"
-                    },
-                    "liability_cap": {
-                        "type": "object",
-                        "properties": {
-                            "amount": {"type": "number"},
-                            "currency": {"type": "string"}
-                        }
-                    },
-                    "signatories": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "title": {"type": "string"}
-                            }
-                        }
-                    }
-                }
-            }
-        }
     
     def _post_process_extraction(self, data: Dict) -> Dict:
         """Post-process and validate extracted data."""
@@ -192,10 +127,8 @@ Return structured JSON. If a field is not found, use null."""
         date_pattern = r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})|(\d{4}-\d{2}-\d{2})'
         dates = re.findall(date_pattern, text)
         if dates:
-            # Take first date as effective date
             date_str = dates[0][0] or dates[0][1]
             try:
-                # Attempt to parse
                 extracted['effective_date'] = datetime.strptime(date_str, '%Y-%m-%d').date()
             except:
                 pass
