@@ -146,6 +146,21 @@ CELERY_TASK_TRACK_STARTED = True
 CHUNK_SIZE = env.int('CHUNK_SIZE', default=800)
 CHUNK_OVERLAP = env.int('CHUNK_OVERLAP', default=100)
 
+# Google Gemini Configuration (via LangChain)
+GOOGLE_API_KEY = env('GOOGLE_API_KEY', default='')
+GEMINI_MODEL = env('GEMINI_MODEL', default='gemini-pro')
+GEMINI_EMBEDDING_MODEL = env('GEMINI_EMBEDDING_MODEL', default='models/embedding-001')
+GEMINI_TEMPERATURE = env.float('GEMINI_TEMPERATURE', default=0.1)
+GEMINI_MAX_TOKENS = env.int('GEMINI_MAX_TOKENS', default=2048)
+
+# Qdrant Vector Database Configuration
+QDRANT_HOST = env('QDRANT_HOST', default='localhost')
+QDRANT_PORT = env.int('QDRANT_PORT', default=6333)
+QDRANT_COLLECTION_NAME = env('QDRANT_COLLECTION_NAME', default='contracts')
+
+# Audit Engine Configuration
+AUDIT_MODE = env('AUDIT_MODE', default='hybrid')  # options: rules_only, llm_only, hybrid
+
 # Webhook Configuration
 WEBHOOK_ENABLED = env.bool('WEBHOOK_ENABLED', default=False)
 WEBHOOK_SECRET = env('WEBHOOK_SECRET', default='change-this-webhook-secret')

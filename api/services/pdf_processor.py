@@ -1,30 +1,36 @@
 """
-PDF processing service.
+PDF processing service using LangChain Gemini embeddings.
 """
 
 import logging
+import hashlib
+from typing import List, Dict
 import PyPDF2
 import pdfplumber
-from typing import List, Dict, Tuple
 from django.conf import settings
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
-import openai
+from qdrant_client.http import models as qdrant_models
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import uuid
 
 logger = logging.getLogger('api')
 
-# Initialize OpenAI
-openai.api_key = settings.OPENAI_API_KEY
-
 
 class PDFProcessor:
-    """Service for processing PDF files."""
+    """Service for processing PDF files with LangChain Gemini embeddings."""
     
     def __init__(self):
+        """Initialize PDF processor with LangChain Gemini embeddings."""
         self.chunk_size = settings.CHUNK_SIZE
         self.chunk_overlap = settings.CHUNK_OVERLAP
         self.qdrant_client = None
+        
+        # Initialize LangChain embeddings for Gemini
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model=settings.GEMINI_EMBEDDING_MODEL,
+            google_api_key=settings.GOOGLE_API_KEY,
+        )
+        
         self._init_qdrant()
     
     def _init_qdrant(self):
@@ -34,34 +40,20 @@ class PDFProcessor:
                 host=settings.QDRANT_HOST,
                 port=settings.QDRANT_PORT,
             )
-            # Create collection if it doesn't exist
+            # Create collection if it doesn't exist (Gemini embeddings are 768-dimensional)
             try:
                 self.qdrant_client.get_collection(settings.QDRANT_COLLECTION_NAME)
             except Exception:
                 self.qdrant_client.create_collection(
                     collection_name=settings.QDRANT_COLLECTION_NAME,
-                    vectors_config=VectorParams(size=1536, distance=Distance.COSINE),
+                    vectors_config=qdrant_models.VectorParams(
+                        size=768,  # Gemini embedding-001 dimension
+                        distance=qdrant_models.Distance.COSINE
+                    ),
                 )
                 logger.info(f"Created Qdrant collection: {settings.QDRANT_COLLECTION_NAME}")
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant: {e}")
-    
-    def extract_text_with_pypdf2(self, pdf_path: str) -> Tuple[str, int]:
-        """Extract text from PDF using PyPDF2."""
-        try:
-            with open(pdf_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                num_pages = len(reader.pages)
-                text_parts = []
-                
-                for page in reader.pages:
-                    text_parts.append(page.extract_text())
-                
-                full_text = '\n'.join(text_parts)
-                return full_text, num_pages
-        except Exception as e:
-            logger.error(f"PyPDF2 extraction failed: {e}")
-            raise
     
     def extract_pages_with_pdfplumber(self, pdf_path: str) -> List[Dict]:
         """Extract text page by page with metadata using pdfplumber."""
@@ -120,16 +112,14 @@ class PDFProcessor:
         return chunks
     
     def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings using OpenAI."""
+        """Generate embeddings using LangChain Gemini."""
         try:
-            response = openai.embeddings.create(
-                model=settings.OPENAI_EMBEDDING_MODEL,
-                input=texts
-            )
-            embeddings = [item.embedding for item in response.data]
+            # Use LangChain's embed_documents method
+            embeddings = self.embeddings.embed_documents(texts)
+            logger.info(f"Generated {len(embeddings)} embeddings using Gemini")
             return embeddings
         except Exception as e:
-            logger.error(f"Embedding generation failed: {e}")
+            logger.error(f"Gemini embedding generation failed: {e}")
             raise
     
     def store_vectors(self, chunks: List[Dict], document_id: int) -> List[str]:
@@ -138,7 +128,7 @@ class PDFProcessor:
             # Extract texts for embedding
             texts = [chunk['text'] for chunk in chunks]
             
-            # Generate embeddings
+            # Generate embeddings using LangChain Gemini
             embeddings = self.generate_embeddings(texts)
             
             # Create points for Qdrant
@@ -149,7 +139,7 @@ class PDFProcessor:
                 vector_id = str(uuid.uuid4())
                 vector_ids.append(vector_id)
                 
-                point = PointStruct(
+                point = qdrant_models.PointStruct(
                     id=vector_id,
                     vector=embedding,
                     payload={
@@ -181,16 +171,16 @@ class PDFProcessor:
         try:
             self.qdrant_client.delete(
                 collection_name=settings.QDRANT_COLLECTION_NAME,
-                points_selector={
-                    'filter': {
-                        'must': [
-                            {
-                                'key': 'document_id',
-                                'match': {'value': document_id}
-                            }
+                points_selector=qdrant_models.FilterSelector(
+                    filter=qdrant_models.Filter(
+                        must=[
+                            qdrant_models.FieldCondition(
+                                key='document_id',
+                                match=qdrant_models.MatchValue(value=document_id)
+                            )
                         ]
-                    }
-                }
+                    )
+                )
             )
             logger.info(f"Deleted vectors for document {document_id}")
         except Exception as e:

@@ -1,102 +1,62 @@
 """
-RAG (Retrieval-Augmented Generation) engine for question answering.
+RAG Engine for question answering using LangChain with Google Gemini.
+Uses LangChain Expression Language (LCEL) for building the RAG pipeline.
 """
 
 import logging
-import openai
+from typing import List, Dict, Iterator
 from django.conf import settings
 from qdrant_client import QdrantClient
-from typing import List, Dict, Tuple
-import uuid
+from qdrant_client.http import models as qdrant_models
+
+# LangChain imports
+from langchain_google_genai import GoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema import StrOutputParser
+from langchain.schema.runnable import RunnablePassthrough
+from langchain_community.vectorstores import Qdrant
+
+from api.models import DocumentChunk
 
 logger = logging.getLogger('api')
 
-# Initialize OpenAI
-openai.api_key = settings.OPENAI_API_KEY
-
 
 class RAGEngine:
-    """Service for RAG-based question answering over contracts."""
+    """RAG engine using LangChain LCEL with Google Gemini."""
     
     def __init__(self):
-        self.model = settings.OPENAI_MODEL
-        self.embedding_model = settings.OPENAI_EMBEDDING_MODEL
-        self.qdrant_client = None
-        self._init_qdrant()
-    
-    def _init_qdrant(self):
-        """Initialize Qdrant client."""
-        try:
-            self.qdrant_client = QdrantClient(
-                host=settings.QDRANT_HOST,
-                port=settings.QDRANT_PORT,
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize Qdrant: {e}")
-    
-    def retrieve(self, question: str, document_ids: List[int] = None, top_k: int = 5) -> List[Dict]:
-        """Retrieve relevant chunks for a question."""
-        try:
-            # Generate query embedding
-            response = openai.embeddings.create(
-                model=self.embedding_model,
-                input=[question]
-            )
-            query_embedding = response.data[0].embedding
-            
-            # Build filter for specific documents if provided
-            search_filter = None
-            if document_ids:
-                search_filter = {
-                    'must': [
-                        {
-                            'key': 'document_id',
-                            'match': {'any': document_ids}
-                        }
-                    ]
-                }
-            
-            # Search Qdrant
-            search_results = self.qdrant_client.search(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                query_vector=query_embedding,
-                query_filter=search_filter,
-                limit=top_k,
-            )
-            
-            # Format results
-            chunks = []
-            for result in search_results:
-                chunks.append({
-                    'text': result.payload.get('text', ''),
-                    'document_id': result.payload.get('document_id'),
-                    'chunk_index': result.payload.get('chunk_index'),
-                    'char_start': result.payload.get('char_start'),
-                    'char_end': result.payload.get('char_end'),
-                    'score': result.score,
-                })
-            
-            logger.info(f"Retrieved {len(chunks)} chunks for question")
-            return chunks
-            
-        except Exception as e:
-            logger.error(f"Retrieval failed: {e}")
-            return []
-    
-    def generate_answer(self, question: str, chunks: List[Dict]) -> Tuple[str, List[Dict]]:
-        """Generate answer using retrieved chunks."""
-        try:
-            # Build context from chunks
-            context_parts = []
-            for i, chunk in enumerate(chunks):
-                context_parts.append(f"[Document {chunk['document_id']}, Chunk {i+1}]\n{chunk['text']}")
-            
-            context = "\n\n".join(context_parts)
-            
-            # System prompt
-            system_prompt = """You are answering questions about legal contracts. Use ONLY the provided context.
-
-Context:
+        """Initialize RAG engine with LangChain components."""
+        # Initialize Gemini LLM
+        self.llm = GoogleGenerativeAI(
+            model=settings.GEMINI_MODEL,
+            google_api_key=settings.GOOGLE_API_KEY,
+            temperature=settings.GEMINI_TEMPERATURE,
+            max_output_tokens=settings.GEMINI_MAX_TOKENS,
+        )
+        
+        # Initialize embeddings
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model=settings.GEMINI_EMBEDDING_MODEL,
+            google_api_key=settings.GOOGLE_API_KEY,
+        )
+        
+        # Initialize Qdrant client
+        self.qdrant_client = Qdrant Client(
+            host=settings.QDRANT_HOST,
+            port=settings.QDRANT_PORT,
+        )
+        
+        # LangChain Qdrant vector store
+        self.vector_store = Qdrant(
+            client=self.qdrant_client,
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            embeddings=self.embeddings,
+        )
+        
+        # Create RAG prompt template
+        self.prompt_template = ChatPromptTemplate.from_messages([
+            ("system", "You are answering questions about legal contracts. Use ONLY the provided context."),
+            ("human", """Context:
 {context}
 
 Instructions:
@@ -105,88 +65,175 @@ Instructions:
 3. Include specific references to document sections when possible
 4. Be concise and accurate
 
-Answer:"""
+Question: {question}
+
+Answer:""")
+        ])
+        
+        logger.info("RAGEngine initialized with LangChain and Google Gemini")
+    
+    def retrieve(self, question: str, document_ids: List[int] = None, top_k: int = 5) -> List[Dict]:
+        """
+        Retrieve relevant document chunks using vector search.
+        
+        Args:
+            question: User's question
+            document_ids: Optional list of document IDs to filter
+            top_k: Number of chunks to retrieve
             
-            # Generate answer
-            response = openai.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt.format(context=context)},
-                    {"role": "user", "content": question}
-                ],
-                temperature=0.3,
+        Returns:
+            List of chunk dictionaries with text and metadata
+        """
+        try:
+            # Build filter for specific documents if provided
+            search_filter = None
+            if document_ids:
+                search_filter = qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="document_id",
+                            match=qdrant_models.MatchAny(any=document_ids)
+                        )
+                    ]
+                )
+            
+            # Use LangChain vector store for similarity search
+            if search_filter:
+                docs = self.vector_store.similarity_search(
+                    question,
+                    k=top_k,
+                    filter=search_filter
+                )
+            else:
+                docs = self.vector_store.similarity_search(
+                    question,
+                    k=top_k
+                )
+            
+            # Convert to our format
+            chunks = []
+            for doc in docs:
+                chunk_data = {
+                    'text': doc.page_content,
+                    'document_id': doc.metadata.get('document_id'),
+                    'chunk_index': doc.metadata.get('chunk_index'),
+                    'char_start': doc.metadata.get('char_start'),
+                    'char_end': doc.metadata.get('char_end'),
+                    'score': doc.metadata.get('score', 0.0),
+                }
+                chunks.append(chunk_data)
+            
+            logger.info(f"Retrieved {len(chunks)} chunks for question")
+            return chunks
+            
+        except Exception as e:
+            logger.error(f"Error retrieving chunks: {e}", exc_info=True)
+            return []
+    
+    def _format_context(self, chunks: List[Dict]) -> str:
+        """Format retrieved chunks into context string."""
+        context_parts = []
+        for i, chunk in enumerate(chunks, 1):
+            doc_id = chunk.get('document_id', 'unknown')
+            text = chunk.get('text', '')
+            context_parts.append(f"[Document {doc_id}, Chunk {i}]\n{text}\n")
+        
+        return '\n'.join(context_parts)
+    
+    def generate_answer(self, question: str, chunks: List[Dict]) -> tuple[str, List[Dict]]:
+        """
+        Generate answer using LangChain LCEL chain.
+        
+        Args:
+            question: User's question
+            chunks: Retrieved document chunks
+            
+        Returns:
+            Tuple of (answer text, citations list)
+        """
+        try:
+            # Build LCEL chain: format context -> prompt -> LLM -> parse output
+            rag_chain = (
+                {
+                    "context": lambda x: self._format_context(chunks),
+                    "question": RunnablePassthrough()
+                }
+                | self.prompt_template
+                | self.llm
+                | StrOutputParser()
             )
             
-            answer = response.choices[0].message.content
+            # Invoke the chain
+            answer = rag_chain.invoke(question)
             
-            # Extract citations
+            # Extract citations from chunks
             citations = self._extract_citations(chunks)
             
-            logger.info("Generated answer successfully")
+            logger.info(f"Generated answer with {len(citations)} citations")
             return answer, citations
             
         except Exception as e:
-            logger.error(f"Answer generation failed: {e}")
-            return "An error occurred while generating the answer.", []
+            logger.error(f"Error generating answer: {e}", exc_info=True)
+            return "I encountered an error processing your question.", []
     
-    def generate_answer_stream(self, question: str, chunks: List[Dict]):
-        """Generate answer with streaming (generator function)."""
+    def generate_answer_stream(self, question: str, chunks: List[Dict]) -> Iterator[str]:
+        """
+        Generate streaming answer using LangChain LCEL chain.
+        
+        Args:
+            question: User's question
+            chunks: Retrieved document chunks
+            
+        Yields:
+            Answer tokens as they're generated
+        """
         try:
-            # Build context
-            context_parts = []
-            for i, chunk in enumerate(chunks):
-                context_parts.append(f"[Document {chunk['document_id']}, Chunk {i+1}]\n{chunk['text']}")
-            
-            context = "\n\n".join(context_parts)
-            
-            system_prompt = """You are answering questions about legal contracts. Use ONLY the provided context.
-
-Context:
-{context}
-
-Instructions:
-1. Answer based solely on the context provided
-2. If the answer is not in the context, say "I cannot answer this based on the provided documents"
-3. Be concise and accurate
-
-Answer:"""
-            
-            # Stream response
-            stream = openai.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt.format(context=context)},
-                    {"role": "user", "content": question}
-                ],
-                temperature=0.3,
-                stream=True,
+            # Build LCEL chain for streaming
+            rag_chain = (
+                {
+                    "context": lambda x: self._format_context(chunks),
+                    "question": RunnablePassthrough()
+                }
+                | self.prompt_template
+                | self.llm
+                | StrOutputParser()
             )
             
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+            # Stream the response
+            for chunk in rag_chain.stream(question):
+                yield chunk
             
-            # Yield citations at the end
+            # After streaming answer, send citations
             citations = self._extract_citations(chunks)
-            yield f"\n\n__CITATIONS__:{citations}"
+            import json
+            yield f"__CITATIONS__:{json.dumps(citations)}"
             
         except Exception as e:
-            logger.error(f"Streaming failed: {e}")
-            yield "An error occurred while generating the answer."
+            logger.error(f"Error in streaming: {e}", exc_info=True)
+            yield "I encountered an error processing your question."
     
     def _extract_citations(self, chunks: List[Dict]) -> List[Dict]:
-        """Extract citation information from chunks."""
+        """Extract citation information from retrieved chunks."""
         citations = []
         for chunk in chunks:
-            citations.append({
-                'document_id': chunk['document_id'],
-                'char_start': chunk['char_start'],
-                'char_end': chunk['char_end'],
-                'page_number': self._estimate_page(chunk['char_start']),  # Rough estimate
-            })
+            citation = {
+                'document_id': chunk.get('document_id'),
+                'chunk_index': chunk.get('chunk_index'),
+                'char_start': chunk.get('char_start'),
+                'char_end': chunk.get('char_end'),
+            }
+            
+            # Try to get page number from database
+            try:
+                db_chunk = DocumentChunk.objects.get(
+                    document_id=chunk.get('document_id'),
+                    chunk_index=chunk.get('chunk_index')
+                )
+                if db_chunk.page:
+                    citation['page_number'] = db_chunk.page.page_number
+            except:
+                pass
+            
+            citations.append(citation)
+        
         return citations
-    
-    def _estimate_page(self, char_position: int) -> int:
-        """Estimate page number from character position (rough estimate)."""
-        # Assume ~3000 characters per page
-        return (char_position // 3000) + 1
