@@ -1,0 +1,49 @@
+# Django and REST Framework
+Django==5.0
+djangorestframework==3.14.0
+drf-spectacular==0.27.0
+
+# Database
+psycopg2-binary==2.9.9
+django-environ==0.11.2
+
+# PDF Processing
+PyPDF2==3.0.1
+pdfplumber==0.11.0
+pdf2image==1.17.0
+
+# Vector Database
+qdrant-client==1.7.0
+
+# LLM Integration
+openai==1.6.1
+tiktoken==0.5.2
+
+# Caching and Task Queue
+redis==5.0.1
+celery==5.3.4
+django-celery-results==2.5.1
+django-celery-beat==2.5.0
+
+# HTTP and Validation
+requests==2.31.0
+pydantic==2.5.3
+
+# Utilities
+python-dotenv==1.0.0
+pillow==10.1.0
+
+# Testing
+pytest==7.4.3
+pytest-django==4.7.0
+pytest-cov==4.1.0
+faker==21.0.0
+
+# Code Quality
+black==23.12.1
+flake8==7.0.0
+isort==5.13.2
+
+# Production Server
+gunicorn==21.2.0
+uvicorn[standard]==0.25.0
