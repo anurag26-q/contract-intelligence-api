@@ -11,7 +11,6 @@ from drf_spectacular.utils import extend_schema
 from api.serializers import HealthCheckSerializer, MetricsSerializer
 from api.middleware import MetricsMiddleware
 from api.models import Document, ContractExtraction
-from qdrant_client import QdrantClient
 from django.conf import settings
 import redis
 
@@ -34,24 +33,12 @@ class HealthCheckView(APIView):
         services = {}
         overall_status = 'healthy'
         
-        # Check PostgreSQL
+        # Check Database (SQLite)
         try:
             connection.ensure_connection()
-            services['postgres'] = 'healthy'
+            services['database'] = 'healthy'
         except Exception as e:
-            services['postgres'] = f'unhealthy: {str(e)}'
-            overall_status = 'unhealthy'
-        
-        # Check Qdrant
-        try:
-            qdrant_client = QdrantClient(
-                host=settings.QDRANT_HOST,
-                port=settings.QDRANT_PORT,
-            )
-            collections = qdrant_client.get_collections()
-            services['qdrant'] = 'healthy'
-        except Exception as e:
-            services['qdrant'] = f'unhealthy: {str(e)}'
+            services['database'] = f'unhealthy: {str(e)}'
             overall_status = 'unhealthy'
         
         # Check Redis

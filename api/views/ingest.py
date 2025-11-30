@@ -32,7 +32,8 @@ class IngestView(APIView):
         serializer = DocumentUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        uploaded_files = request.FILES.getlist('files')
+        uploaded_files = serializer.validated_data['files']
+        
         document_ids = []
         documents_created = []
         
@@ -48,18 +49,31 @@ class IngestView(APIView):
             file_hash = document.calculate_file_hash(uploaded_file.file)
             document.file_hash = file_hash
             
-            # Check if document already exists
-            existing_doc = Document.objects.filter(file_hash=file_hash).first()
-            if existing_doc:
-                logger.info(f"Document with hash {file_hash} already exists (ID: {existing_doc.id})")
-                document_ids.append(existing_doc.id)
-                documents_created.append(existing_doc)
-                continue
-            
-            # Save document
-            document.save()
-            document_ids.append(document.id)
-            documents_created.append(document)
+            # Save document with duplicate handling
+            try:
+                document.save()
+                document_ids.append(document.id)
+                documents_created.append(document)
+            except Exception as e:
+                # Check for duplicate key error
+                error_str = str(e).lower()
+                if 'unique constraint' in error_str or 'duplicate key' in error_str:
+                    logger.info(f"Document with hash {file_hash} already exists, fetching existing record")
+                    existing_doc = Document.objects.filter(file_hash=file_hash).first()
+                    if existing_doc:
+                        # Update existing document status to allow retry
+                        if existing_doc.status == 'failed':
+                            existing_doc.status = 'pending'
+                            existing_doc.error_message = None
+                            existing_doc.save()
+                            logger.info(f"Reset status for failed document {existing_doc.id}")
+                        
+                        document = existing_doc
+                        document_ids.append(document.id)
+                        documents_created.append(document)
+                else:
+                    logger.error(f"Error saving document: {e}")
+                    continue
             
             # Trigger async processing
             process_document_task.delay(document.id)
