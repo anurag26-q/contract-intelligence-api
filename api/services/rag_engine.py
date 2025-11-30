@@ -4,16 +4,16 @@ Uses LangChain's vector store integration and LCEL chains.
 """
 
 import logging
-from typing import List, Dict, Iterator
 from django.conf import settings
+from typing import List, Dict, Iterator
 
+from langchain_chroma import Chroma
+from langchain_chroma import Chroma
+from langchain.schema import StrOutputParser
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema.runnable import RunnablePassthrough
 # LangChain imports
 from langchain_google_genai import GoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema import StrOutputParser
-from langchain.schema.runnable import RunnablePassthrough
-from langchain_community.vectorstores import Qdrant
-from qdrant_client import QdrantClient
 
 from api.models import DocumentChunk
 
@@ -32,25 +32,30 @@ class RAGEngine:
             temperature=settings.GEMINI_TEMPERATURE,
             max_output_tokens=settings.GEMINI_MAX_TOKENS,
         )
+        logger.info(f"Initialized Gemini LLM with model: {settings.GEMINI_MODEL}")
+        logger.info(f"Google API key: {settings.GOOGLE_API_KEY}")
+        logger.info(f"Temperature: {settings.GEMINI_TEMPERATURE}")
+        logger.info(f"Max output tokens: {settings.GEMINI_MAX_TOKENS}")
+        logger.info(f"Gemini LLM: {self.llm}")
+        
         
         # Initialize embeddings
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model=settings.GEMINI_EMBEDDING_MODEL,
             google_api_key=settings.GOOGLE_API_KEY,
         )
+        logger.info(f"Initialized embeddings with model: {settings.GEMINI_EMBEDDING_MODEL}")
+        logger.info(f"Google API key: {settings.GOOGLE_API_KEY}")
+        logger.info(f"Embeddings: {self.embeddings}")
         
-        # Initialize Qdrant client
-        self.qdrant_client = QdrantClient(
-            host=settings.QDRANT_HOST,
-            port=settings.QDRANT_PORT,
+        # LangChain Chroma vector store
+        self.vector_store = Chroma(
+            persist_directory=settings.CHROMA_DB_DIR,
+            embedding_function=self.embeddings,
         )
-        
-        # LangChain Qdrant vector store
-        self.vector_store = Qdrant(
-            client=self.qdrant_client,
-            collection_name=settings.QDRANT_COLLECTION_NAME,
-            embeddings=self.embeddings,
-        )
+        logger.info(f"Initialized LangChain Chroma vector store with persist directory: {settings.CHROMA_DB_DIR}")
+        logger.info(f"Embeddings: {self.embeddings}")
+        logger.info(f"Vector store: {self.vector_store}")
         
         # Create RAG prompt template
         self.prompt_template = ChatPromptTemplate.from_messages([
@@ -69,7 +74,7 @@ Question: {question}
 Answer:""")
         ])
         
-        logger.info("RAGEngine initialized with LangChain Qdrant vector store and Gemini")
+        logger.info("RAGEngine initialized with LangChain Chroma vector store and Gemini")
     
     def retrieve(self, question: str, document_ids: List[int] = None, top_k: int = 5) -> List[Dict]:
         """
@@ -88,17 +93,15 @@ Answer:""")
             search_kwargs = {"k": top_k}
             
             if document_ids:
-                # LangChain Qdrant filter format
-                search_kwargs["filter"] = {
-                    "must": [
-                        {
-                            "key": "metadata.document_id",
-                            "match": {"any": document_ids}
-                        }
-                    ]
-                }
+                # Chroma filter format: {"document_id": {"$in": [id1, id2]}}
+                # Or if just one: {"document_id": id}
+                if len(document_ids) == 1:
+                    search_kwargs["filter"] = {"document_id": document_ids[0]}
+                else:
+                    search_kwargs["filter"] = {"document_id": {"$in": document_ids}}
             
             # Use LangChain vector store similarity search
+            logger.debug(f"Similarity search kwargs: {search_kwargs} for question: {question}")
             docs = self.vector_store.similarity_search(
                 question,
                 **search_kwargs
@@ -116,8 +119,14 @@ Answer:""")
                     'score': doc.metadata.get('score', 0.0),
                 }
                 chunks.append(chunk_data)
-            
             logger.info(f"Retrieved {len(chunks)} chunks using LangChain vector store")
+            if len(chunks) > 0:
+                # Log a sample of metadata for debugging
+                try:
+                    sample_meta = docs[0].metadata
+                    logger.debug(f"Sample doc metadata: {sample_meta}")
+                except Exception:
+                    pass
             return chunks
             
         except Exception as e:
