@@ -18,8 +18,8 @@ class IngestEndpointTest(TestCase):
     def test_ingest_valid_pdf(self):
         """Test uploading a valid PDF file."""
         # Create a fake PDF file
-        pdf_content = b'%PDF-1.4 fake pdf content'
-        pdf_file = SimpleUploadedFile("test_contract.pdf", pdf_content, content_type="application/pdf")
+        pdf_content = r"C:\Users\anura\Downloads\GCC_Services.pdf"
+        pdf_file = SimpleUploadedFile(r"C:\Users\anura\Downloads\GCC_Services.pdf", pdf_content, content_type="application/pdf")
         
         response = self.client.post('/api/ingest', {'files': [pdf_file]}, format='multipart')
         
@@ -38,8 +38,8 @@ class IngestEndpointTest(TestCase):
     def test_ingest_duplicate_file(self):
         """Test uploading the same file twice should detect duplicate."""
         pdf_content = b'%PDF-1.4 same content'
-        pdf_file1 = SimpleUploadedFile("contract.pdf", pdf_content, content_type="application/pdf")
-        pdf_file2 = SimpleUploadedFile("contract_copy.pdf", pdf_content, content_type="application/pdf")
+        pdf_file1 = SimpleUploadedFile(r"C:\Users\anura\Downloads\Service-Provider-Agreement.pdf", pdf_content, content_type="application/pdf")
+        pdf_file2 = SimpleUploadedFile(r"C:\Users\anura\Downloads\GCC_Services.pdf", pdf_content, content_type="application/pdf")
         
         # First upload
         response1 = self.client.post('/api/ingest', {'files': [pdf_file1]}, format='multipart')
@@ -54,8 +54,8 @@ class IngestEndpointTest(TestCase):
     
     def test_ingest_multiple_files(self):
         """Test uploading multiple PDF files at once."""
-        pdf1 = SimpleUploadedFile("doc1.pdf", b'%PDF-1.4 content1', content_type="application/pdf")
-        pdf2 = SimpleUploadedFile("doc2.pdf", b'%PDF-1.4 content2', content_type="application/pdf")
+        pdf1 = SimpleUploadedFile(r"C:\Users\anura\Downloads\Service-Provider-Agreement.pdf", b'%PDF-1.4 content1', content_type="application/pdf")
+        pdf2 = SimpleUploadedFile(r"C:\Users\anura\Downloads\GCC_Services.pdf", b'%PDF-1.4 content2', content_type="application/pdf")
         
         response = self.client.post('/api/ingest', {'files': [pdf1, pdf2]}, format='multipart')
         
