@@ -156,10 +156,8 @@ GEMINI_EMBEDDING_MODEL = env('GEMINI_EMBEDDING_MODEL', default='models/embedding
 GEMINI_TEMPERATURE = env.float('GEMINI_TEMPERATURE', default=0.1)
 GEMINI_MAX_TOKENS = env.int('GEMINI_MAX_TOKENS', default=2048)
 
-# Qdrant Vector Database Configuration
-QDRANT_HOST = env('QDRANT_HOST', default='localhost')
-QDRANT_PORT = env.int('QDRANT_PORT', default=6333)
-QDRANT_COLLECTION_NAME = env('QDRANT_COLLECTION_NAME', default='contracts')
+# ChromaDB Configuration
+CHROMA_DB_DIR = env('CHROMA_DB_DIR', default=str(BASE_DIR / 'chroma_db'))
 
 # Audit Engine Configuration
 AUDIT_MODE = env('AUDIT_MODE', default='hybrid')  # options: rules_only, llm_only, hybrid
