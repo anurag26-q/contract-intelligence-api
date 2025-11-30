@@ -38,9 +38,10 @@ staticfiles/
 /static/
 
 # Environment variables
-.env
+# .env
 .env.local
 .env.*.local
+.env
 
 # IDEs
 .vscode/
@@ -88,6 +89,6 @@ LOOM_SCRIPT.md
 setup_github.ps1
 setup_github.sh
 push_to_github.ps1
-
+.push_to_github.ps1
 
 
