@@ -2,15 +2,16 @@
 Ask endpoint - RAG-based question answering over contracts.
 """
 
-import logging
 import json
+import logging
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
 from django.http import StreamingHttpResponse
+from api.services.rag_engine import RAGEngine
+from api.models import Document, DocumentChunk
 from drf_spectacular.utils import extend_schema
 from api.serializers import AskRequestSerializer, AskResponseSerializer
-from api.services.rag_engine import RAGEngine
 
 logger = logging.getLogger('api')
 
@@ -36,17 +37,121 @@ class AskView(APIView):
         question = serializer.validated_data['question']
         document_ids = serializer.validated_data.get('document_ids')
         
+        # If document_ids provided, pre-check the DB for their chunk state to avoid
+        # returning unrelated vectors from the global Chroma collection (which may
+        # be shared between tests or previous runs).
+        if document_ids:
+            missing_docs = []
+            not_processed = []
+            no_vectors = []
+            # Check DB state for each requested document
+            for doc_id in document_ids:
+                try:
+                    doc = Document.objects.get(id=doc_id)
+                except Document.DoesNotExist:
+                    missing_docs.append(doc_id)
+                    continue
+
+                # If there are no database chunks for the doc, handle accordingly
+                has_chunks = DocumentChunk.objects.filter(document_id=doc_id).exists()
+                if not has_chunks:
+                    if doc.status != 'completed':
+                        not_processed.append(doc_id)
+                    else:
+                        no_vectors.append(doc_id)
+
+            # Return more helpful message early, without hitting vector store
+            if missing_docs:
+                return Response({
+                    'success': False,
+                    'error': 'Documents not found',
+                    'missing_document_ids': missing_docs
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            if not_processed:
+                return Response({
+                    'success': False,
+                    'error': 'Some documents are not processed yet',
+                    'documents_not_processed': not_processed
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if no_vectors:
+                return Response({
+                    'success': False,
+                    'error': 'Requested documents are processed but no vectors are indexed',
+                    'document_ids': no_vectors
+                }, status=status.HTTP_404_NOT_FOUND)
+
         # Initialize RAG engine
         rag_engine = RAGEngine()
         
         # Retrieve relevant chunks
         chunks = rag_engine.retrieve(question, document_ids=document_ids, top_k=5)
         
+        # If no document ids specified and there are no chunks in the DB, return helpful message
+        if not chunks and not document_ids:
+            if not DocumentChunk.objects.exists():
+                return Response({
+                    'success': False,
+                    'error': 'No documents are indexed yet. Please ingest and process documents before asking questions.'
+                }, status=status.HTTP_404_NOT_FOUND)
+
         if not chunks:
+            # Try to detect why: check if documents exist and have chunks
+            if document_ids:
+                missing_docs = []
+                not_processed = []
+                no_vectors = []
+                for doc_id in document_ids:
+                    try:
+                        doc = Document.objects.get(id=doc_id)
+                    except Document.DoesNotExist:
+                        missing_docs.append(doc_id)
+                        continue
+
+                    # Check if the document has DocumentChunk entries
+                    has_chunks = DocumentChunk.objects.filter(document_id=doc_id).exists()
+                    if not has_chunks:
+                        if doc.status != 'completed':
+                            not_processed.append(doc_id)
+                        else:
+                            no_vectors.append(doc_id)
+
+                # Build informative message
+                if missing_docs:
+                    return Response({
+                        'success': False,
+                        'error': 'Documents not found',
+                        'missing_document_ids': missing_docs
+                    }, status=status.HTTP_404_NOT_FOUND)
+
+                if not_processed:
+                    return Response({
+                        'success': False,
+                        'error': 'Some documents are not processed yet',
+                        'documents_not_processed': not_processed
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                if no_vectors:
+                    return Response({
+                        'success': False,
+                        'error': 'Requested documents are processed but no vectors are indexed',
+                        'document_ids': no_vectors
+                    }, status=status.HTTP_404_NOT_FOUND)
+
+            # Generic fallback
             return Response({
                 'success': False,
                 'error': 'No relevant documents found for this question'
             }, status=status.HTTP_404_NOT_FOUND)
+
+        # If no document ids specified and there are no chunks in the DB, return helpful message
+        if not chunks and not document_ids:
+            if not DocumentChunk.objects.exists():
+                return Response({
+                    'success': False,
+                    'error': 'No documents are indexed yet. Please ingest and process documents before asking questions.'
+                }, status=status.HTTP_404_NOT_FOUND)
         
         # Generate answer
         answer, citations = rag_engine.generate_answer(question, chunks)
