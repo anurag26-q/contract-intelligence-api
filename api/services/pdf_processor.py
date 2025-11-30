@@ -8,9 +8,8 @@ from django.conf import settings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Qdrant
+from langchain_chroma import Chroma
 from langchain.schema import Document as LangChainDocument
-from qdrant_client import QdrantClient
 
 logger = logging.getLogger('api')
 
@@ -22,12 +21,19 @@ class PDFProcessor:
         """Initialize PDF processor with LangChain components."""
         self.chunk_size = settings.CHUNK_SIZE
         self.chunk_overlap = settings.CHUNK_OVERLAP
+        logger.info("Initializing PDF processor with LangChain components")
+        logger.info("Chunk size: {}".format(self.chunk_size))
+        logger.info("Chunk overlap: {}".format(self.chunk_overlap))
         
         # Initialize LangChain embeddings for Gemini
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model=settings.GEMINI_EMBEDDING_MODEL,
             google_api_key=settings.GOOGLE_API_KEY,
         )
+        logger.info("Initialized LangChain embeddings for Gemini")
+        logger.info("Gemini embedding model: {}".format(settings.GEMINI_EMBEDDING_MODEL))
+        logger.info("Google API key: {}".format(settings.GOOGLE_API_KEY))
+        logger.info("Google Embeddings : {}".format(self.embeddings))
         
         # Initialize LangChain text splitter
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -37,35 +43,23 @@ class PDFProcessor:
             separators=["\n\n", "\n", ". ", " ", ""],
         )
         
-        # Initialize Qdrant client for collection management
-        self.qdrant_client = QdrantClient(
-            host=settings.QDRANT_HOST,
-            port=settings.QDRANT_PORT,
+        # Initialize LangChain Chroma vector store
+        self.vector_store = Chroma(
+            persist_directory=settings.CHROMA_DB_DIR,
+            embedding_function=self.embeddings,
         )
-        
-        # Initialize LangChain Qdrant vector store
-        self.vector_store = None
-        self._init_vector_store()
-    
-    def _init_vector_store(self):
-        """Initialize LangChain Qdrant vector store."""
-        try:
-            # Create LangChain Qdrant instance
-            self.vector_store = Qdrant(
-                client=self.qdrant_client,
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                embeddings=self.embeddings,
-            )
-            logger.info(f"Initialized LangChain Qdrant vector store: {settings.QDRANT_COLLECTION_NAME}")
-        except Exception as e:
-            logger.error(f"Failed to initialize vector store: {e}")
+        logger.info(f"Initialized LangChain Chroma vector store at {settings.CHROMA_DB_DIR}")
     
     def extract_pages_with_langchain(self, pdf_path: str) -> List[Dict]:
         """Extract text page by page using LangChain PyPDFLoader."""
         try:
             # Use LangChain's PDF loader
             loader = PyPDFLoader(pdf_path)
+
             pages = loader.load()
+            logger.info(f"Extracted {len(pages)} pages using LangChain PyPDFLoader")
+            logger.info(f"Pages: {pages}")
+            
             
             pages_data = []
             for page_num, page in enumerate(pages, start=1):
@@ -110,7 +104,7 @@ class PDFProcessor:
             raise
     
     def store_vectors(self, chunks: List[Dict], document_id: int) -> List[str]:
-        """Store chunk embeddings using LangChain Qdrant."""
+        """Store chunk embeddings using LangChain Chroma."""
         try:
             # Convert chunks to LangChain Document objects
             documents = []
@@ -136,7 +130,7 @@ class PDFProcessor:
             # This handles embedding generation and storage automatically
             vector_ids = self.vector_store.add_documents(documents)
             
-            logger.info(f"Stored {len(documents)} vectors using LangChain Qdrant for document {document_id}")
+            logger.info(f"Stored {len(documents)} vectors using LangChain Chroma for document {document_id}")
             return vector_ids
             
         except Exception as e:
@@ -144,25 +138,13 @@ class PDFProcessor:
             raise
     
     def delete_document_vectors(self, document_id: int):
-        """Delete all vectors for a document using LangChain Qdrant."""
+        """Delete all vectors for a document using LangChain Chroma."""
         try:
-            # Use LangChain's delete method with filter
-            # Note: LangChain Qdrant uses the underlying client for deletion
-            from qdrant_client.http import models as qdrant_models
-            
-            self.qdrant_client.delete(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                points_selector=qdrant_models.FilterSelector(
-                    filter=qdrant_models.Filter(
-                        must=[
-                            qdrant_models.FieldCondition(
-                                key='metadata.document_id',  # Note: LangChain stores metadata differently
-                                match=qdrant_models.MatchValue(value=document_id)
-                            )
-                        ]
-                    )
-                )
+            # Delete by metadata filter
+            # Chroma supports deleting by where clause
+            self.vector_store._collection.delete(
+                where={"document_id": document_id}
             )
-            logger.info(f"Deleted vectors for document {document_id} using LangChain Qdrant")
+            logger.info(f"Deleted vectors for document {document_id} using LangChain Chroma")
         except Exception as e:
             logger.error(f"Vector deletion failed: {e}")
