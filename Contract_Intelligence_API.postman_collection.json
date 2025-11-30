@@ -1,0 +1,313 @@
+{
+    "info": {
+        "_postman_id": "contract-intelligence-api",
+        "name": "Contract Intelligence API",
+        "description": "Complete API collection for Contract Intelligence - LangChain + Google Gemini",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Health & Metrics",
+            "item": [
+                {
+                    "name": "Health Check",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "http://localhost:8000/api/healthz",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "healthz"
+                            ]
+                        },
+                        "description": "Check API and service health status"
+                    }
+                },
+                {
+                    "name": "Get Metrics",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "http://localhost:8000/api/metrics",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "metrics"
+                            ]
+                        },
+                        "description": "Get API usage metrics"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Document Ingestion",
+            "item": [
+                {
+                    "name": "Upload PDFs",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "files",
+                                    "type": "file",
+                                    "src": [],
+                                    "description": "Select one or more PDF files (max 10, 50MB each)"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "http://localhost:8000/api/ingest",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "ingest"
+                            ]
+                        },
+                        "description": "Upload 1-10 PDF contracts for processing"
+                    }
+                },
+                {
+                    "name": "List Documents",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "http://localhost:8000/api/ingest",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "ingest"
+                            ]
+                        },
+                        "description": "List all uploaded documents"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Contract Extraction",
+            "item": [
+                {
+                    "name": "Extract Fields",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"document_id\": 4\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "http://localhost:8000/api/extract",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "extract"
+                            ]
+                        },
+                        "description": "Extract structured fields from a contract using Gemini"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "RAG Q&A",
+            "item": [
+                {
+                    "name": "Ask Question",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"question\": \"What are the payment terms?\",\n  \"document_ids\": [4, 5, 6]\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "http://localhost:8000/api/ask",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "ask"
+                            ]
+                        },
+                        "description": "Ask questions about contracts using RAG with Gemini"
+                    }
+                },
+                {
+                    "name": "Ask Question (Streaming)",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "http://localhost:8000/api/ask/stream?question=What are the termination conditions?&document_ids=4,5,6",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "ask",
+                                "stream"
+                            ],
+                            "query": [
+                                {
+                                    "key": "question",
+                                    "value": "What are the termination conditions?"
+                                },
+                                {
+                                    "key": "document_ids",
+                                    "value": "4,5,6"
+                                }
+                            ]
+                        },
+                        "description": "Ask questions with streaming response (SSE)"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Contract Audit",
+            "item": [
+                {
+                    "name": "Audit Contract",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"document_id\": 4\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "http://localhost:8000/api/audit",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "audit"
+                            ]
+                        },
+                        "description": "Audit contract for risks (hybrid: rules + LLM)"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Documentation",
+            "item": [
+                {
+                    "name": "API Docs (Swagger UI)",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "http://localhost:8000/api/docs/",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "docs",
+                                ""
+                            ]
+                        },
+                        "description": "Open API documentation in browser"
+                    }
+                },
+                {
+                    "name": "OpenAPI Schema",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "http://localhost:8000/api/schema/",
+                            "protocol": "http",
+                            "host": [
+                                "localhost"
+                            ],
+                            "port": "8000",
+                            "path": [
+                                "api",
+                                "schema",
+                                ""
+                            ]
+                        },
+                        "description": "Get OpenAPI schema (JSON)"
+                    }
+                }
+            ]
+        }
+    ],
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:8000",
+            "type": "string"
+        }
+    ]
+}
